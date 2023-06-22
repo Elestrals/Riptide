@@ -24,21 +24,22 @@ namespace RiptideNetworking
     public class Message
     {
         /// <summary>The maximum amount of bytes that a message can contain. Includes a 1 byte header.</summary>
-        public const int MaxMessageSize = 1250;
+        //public const int MaxMessageSize = 1250;
+        public const int MaxMessageSize = 2450;
 
         /// <summary>How many messages to add to the pool for each <see cref="Server"/> or <see cref="Client"/> instance that is started.</summary>
         /// <remarks>Changes will not affect <see cref="Server"/> and <see cref="Client"/> instances which are already running until they are restarted.</remarks>
         public static byte InstancesPerSocket { get; set; } = 4;
         /// <summary>A pool of reusable message instances.</summary>
-        private static readonly List<Message> pool = new List<Message>();
+        internal static readonly List<Message> pool = new List<Message>();
 
         /// <summary>The message's send mode.</summary>
-        public MessageSendMode SendMode { get; private set; }
+        public MessageSendMode SendMode { get; internal set; }
         /// <summary>How often to try sending the message before giving up.</summary>
         /// <remarks>The default RUDP transport only uses this when sending messages with their <see cref="SendMode"/> set to <see cref="MessageSendMode.reliable"/>. Other transports may ignore this property entirely.</remarks>
         public int MaxSendAttempts { get; set; }
         /// <summary>The message's data.</summary>
-        public byte[] Bytes { get; private set; }
+        public byte[] Bytes { get; internal set; }
         /// <summary>The length in bytes of the unread data contained in the message.</summary>
         public int UnreadLength => writePos - readPos;
         /// <summary>The length in bytes of the data that has been written to the message.</summary>
@@ -47,13 +48,13 @@ namespace RiptideNetworking
         internal int UnwrittenLength => Bytes.Length - writePos;
 
         /// <summary>The position in the byte array that the next bytes will be written to.</summary>
-        private ushort writePos = 0;
+        internal ushort writePos = 0;
         /// <summary>The position in the byte array that the next bytes will be read from.</summary>
-        private ushort readPos = 0;
+        internal ushort readPos = 0;
 
         /// <summary>Initializes a reusable <see cref="Message"/> instance.</summary>
         /// <param name="maxSize">The maximum amount of bytes the message can contain.</param>
-        private Message(int maxSize = MaxMessageSize) => Bytes = new byte[maxSize];
+        internal Message(int maxSize = MaxMessageSize) => Bytes = new byte[maxSize];
 
         #region Pooling
         /// <summary>Increases the amount of messages in the pool. For use when a new <see cref="Server"/> or <see cref="Client"/> is started.</summary>
@@ -93,13 +94,13 @@ namespace RiptideNetworking
         /// <param name="maxSendAttempts">How often to try sending the message before giving up.</param>
         /// <param name="shouldAutoRelay">Whether or not <see cref="Server"/> instances should automatically relay this message to all other clients. This has no effect when <see cref="Server.AllowAutoMessageRelay"/> is set to <see langword="false"/> and does not affect how clients handle messages.</param>
         /// <returns>A message instance ready to be used for sending.</returns>
-        public static Message Create(MessageSendMode sendMode, ushort id, int maxSendAttempts = 15, bool shouldAutoRelay = false)
+        public static Message Create(MessageSendMode sendMode, ushort id, int maxSendAttempts = 35, bool shouldAutoRelay = false)
         {
             return RetrieveFromPool().PrepareForUse(shouldAutoRelay ? (HeaderType)sendMode + 1 : (HeaderType)sendMode, maxSendAttempts).Add(id);
         }
         /// <inheritdoc cref="Create(MessageSendMode, ushort, int, bool)"/>
         /// <remarks>NOTE: <paramref name="id"/> will be cast to a <see cref="ushort"/>. You should ensure that its value never exceeds that of <see cref="ushort.MaxValue"/>, otherwise you'll encounter unexpected behaviour when handling messages.</remarks>
-        public static Message Create(MessageSendMode sendMode, Enum id, int maxSendAttempts = 15, bool shouldAutoRelay = false)
+        public static Message Create(MessageSendMode sendMode, Enum id, int maxSendAttempts = 35, bool shouldAutoRelay = false)
         {
             return Create(sendMode, (ushort)(object)id, maxSendAttempts, shouldAutoRelay);
         }
@@ -107,7 +108,7 @@ namespace RiptideNetworking
         /// <param name="messageHeader">The message's header type.</param>
         /// <param name="maxSendAttempts">How often to try sending the message before giving up.</param>
         /// <returns>A message instance ready to be used for sending.</returns>
-        internal static Message Create(HeaderType messageHeader, int maxSendAttempts = 15)
+        internal static Message Create(HeaderType messageHeader, int maxSendAttempts = 35)
         {
             return RetrieveFromPool().PrepareForUse(messageHeader, maxSendAttempts);
         }
@@ -122,7 +123,7 @@ namespace RiptideNetworking
 
         /// <summary>Retrieves a message instance from the pool. If none is available, a new instance is created.</summary>
         /// <returns>A message instance ready to be used for sending or handling.</returns>
-        private static Message RetrieveFromPool()
+        internal static Message RetrieveFromPool()
         {
             lock (pool)
             {
@@ -157,7 +158,7 @@ namespace RiptideNetworking
         #region Functions
         /// <summary>Prepares the message to be used.</summary>
         /// <returns>The message, ready to be used.</returns>
-        private Message PrepareForUse()
+        internal Message PrepareForUse()
         {
             SetReadWritePos(0, 0);
             return this;
@@ -166,7 +167,7 @@ namespace RiptideNetworking
         /// <param name="messageHeader">The header of the message.</param>
         /// <param name="maxSendAttempts">How often to try sending the message before giving up.</param>
         /// <returns>The message, ready to be used for sending.</returns>
-        private Message PrepareForUse(HeaderType messageHeader, int maxSendAttempts)
+        internal Message PrepareForUse(HeaderType messageHeader, int maxSendAttempts)
         {
             MaxSendAttempts = maxSendAttempts;
             SetReadWritePos(0, 1);
@@ -187,7 +188,7 @@ namespace RiptideNetworking
         /// <summary>Sets the message's read and write position.</summary>
         /// <param name="newReadPos">The new read position.</param>
         /// <param name="newWritePos">The new write position.</param>
-        private void SetReadWritePos(ushort newReadPos, ushort newWritePos)
+        internal void SetReadWritePos(ushort newReadPos, ushort newWritePos)
         {
             readPos = newReadPos;
             writePos = newWritePos;
@@ -311,7 +312,7 @@ namespace RiptideNetworking
         /// <param name="amount">The amount of bytes to read.</param>
         /// <param name="array">The array to write the bytes into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadBytes(int amount, byte[] array, int startIndex = 0)
+        internal void ReadBytes(int amount, byte[] array, int startIndex = 0)
         {
             if (UnreadLength < amount)
             {
@@ -459,7 +460,7 @@ namespace RiptideNetworking
         /// <param name="byteAmount">The number of bytes the bools are being stored in.</param>
         /// <param name="array">The array to write the bools into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadBools(int byteAmount, bool[] array, int startIndex = 0)
+        internal void ReadBools(int byteAmount, bool[] array, int startIndex = 0)
         {
             // Read 8 bools from each byte
             bool isLengthMultipleOf8 = array.Length % 8 == 0;
@@ -708,7 +709,7 @@ namespace RiptideNetworking
         /// <param name="amount">The amount of shorts to read.</param>
         /// <param name="array">The array to write the shorts into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadShorts(int amount, short[] array, int startIndex = 0)
+        internal void ReadShorts(int amount, short[] array, int startIndex = 0)
         {
             if (UnreadLength < amount * RiptideConverter.ShortLength)
             {
@@ -727,7 +728,7 @@ namespace RiptideNetworking
         /// <param name="amount">The amount of ushorts to read.</param>
         /// <param name="array">The array to write the ushorts into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadUShorts(int amount, ushort[] array, int startIndex = 0)
+        internal void ReadUShorts(int amount, ushort[] array, int startIndex = 0)
         {
             if (UnreadLength < amount * RiptideConverter.UShortLength)
             {
@@ -962,7 +963,7 @@ namespace RiptideNetworking
         /// <param name="amount">The amount of ints to read.</param>
         /// <param name="array">The array to write the ints into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadInts(int amount, int[] array, int startIndex = 0)
+        internal void ReadInts(int amount, int[] array, int startIndex = 0)
         {
             if (UnreadLength < amount * RiptideConverter.IntLength)
             {
@@ -981,7 +982,7 @@ namespace RiptideNetworking
         /// <param name="amount">The amount of uints to read.</param>
         /// <param name="array">The array to write the uints into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadUInts(int amount, uint[] array, int startIndex = 0)
+        internal void ReadUInts(int amount, uint[] array, int startIndex = 0)
         {
             if (UnreadLength < amount * RiptideConverter.UIntLength)
             {
@@ -1216,7 +1217,7 @@ namespace RiptideNetworking
         /// <param name="amount">The amount of longs to read.</param>
         /// <param name="array">The array to write the longs into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadLongs(int amount, long[] array, int startIndex = 0)
+        internal void ReadLongs(int amount, long[] array, int startIndex = 0)
         {
             if (UnreadLength < amount * RiptideConverter.LongLength)
             {
@@ -1235,7 +1236,7 @@ namespace RiptideNetworking
         /// <param name="amount">The amount of ulongs to read.</param>
         /// <param name="array">The array to write the ulongs into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadULongs(int amount, ulong[] array, int startIndex = 0)
+        internal void ReadULongs(int amount, ulong[] array, int startIndex = 0)
         {
             if (UnreadLength < amount * RiptideConverter.ULongLength)
             {
@@ -1363,7 +1364,7 @@ namespace RiptideNetworking
         /// <param name="amount">The amount of floats to read.</param>
         /// <param name="array">The array to write the floats into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadFloats(int amount, float[] array, int startIndex = 0)
+        internal void ReadFloats(int amount, float[] array, int startIndex = 0)
         {
             if (UnreadLength < amount * RiptideConverter.FloatLength)
             {
@@ -1491,7 +1492,7 @@ namespace RiptideNetworking
         /// <param name="amount">The amount of doubles to read.</param>
         /// <param name="array">The array to write the doubles into.</param>
         /// <param name="startIndex">The position at which to start writing into <paramref name="array"/>.</param>
-        private void ReadDoubles(int amount, double[] array, int startIndex = 0)
+        internal void ReadDoubles(int amount, double[] array, int startIndex = 0)
         {
             if (UnreadLength < amount * RiptideConverter.DoubleLength)
             {
@@ -1619,5 +1620,44 @@ namespace RiptideNetworking
         }
         #endregion
         #endregion
+
+
+
+
+        #region Delivery Data
+
+        internal ushort sequenceId;
+        public void SetSequenceId(ushort id)
+        {
+            sequenceId = id;
+        }
+
+
+        #endregion
+    }
+
+    [System.Serializable]
+    public struct MessageData
+    {
+        public ushort id;
+        public Message message;
+        public string whenSend;
+        public string whenReceive;
+
+        public MessageData(ushort id, Message message, bool isSending)
+        {
+            this.id = id;
+            this.message = message;
+            if (isSending == true)
+            {
+                whenSend = DateTimeOffset.UtcNow.DateTime.ToLongDateString();
+                whenReceive = "";
+            }
+            else
+            {
+                whenReceive = DateTimeOffset.UtcNow.DateTime.ToLongDateString();
+                whenSend = "";
+            }
+        }
     }
 }

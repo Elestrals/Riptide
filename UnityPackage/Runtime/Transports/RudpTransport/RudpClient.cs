@@ -27,8 +27,15 @@ namespace RiptideNetworking.Transports.RudpTransport
         public event EventHandler<ClientConnectedEventArgs> ClientConnected;
         /// <inheritdoc/>
         public event EventHandler<ClientDisconnectedEventArgs> ClientDisconnected;
-
         /// <inheritdoc/>
+        public event EventHandler<ClientReconnectedArgs> ClientReconnected;
+        public event EventHandler<ushort> AckRecieved;
+        #region Added Events
+
+        #endregion
+
+
+        public string UserId { get; private set; }
         public ushort Id { get; private set; }
         /// <inheritdoc/>
         public short RTT => peer.RTT;
@@ -40,8 +47,13 @@ namespace RiptideNetworking.Transports.RudpTransport
         public bool IsConnecting => connectionState == ConnectionState.connecting;
         /// <inheritdoc/>
         public bool IsConnected => connectionState == ConnectionState.connected;
+        
+
         /// <summary>The time (in milliseconds) after which to disconnect if there's no heartbeat from the server.</summary>
-        public ushort TimeoutTime { get; set; } = 5000;
+        public int TimeoutTime { get; set; } = 7500;
+
+        /// <summary>The time (in milliseconds) after which to disconnect if there's no heartbeat from the server.</summary>
+        public int AwayTime { get; set; } = 7500;
         /// <summary>The interval (in milliseconds) at which to send and expect heartbeats from the server.</summary>
         public ushort HeartbeatInterval
         {
@@ -59,8 +71,12 @@ namespace RiptideNetworking.Transports.RudpTransport
         private RudpPeer peer;
         /// <summary>The connection's remote endpoint.</summary>
         private IPEndPoint remoteEndPoint;
-        /// <summary>The client's current connection state.</summary>
+
+
+        #region Added Properties
         private ConnectionState connectionState = ConnectionState.notConnected;
+        #endregion
+
         /// <summary>How many connection attempts have been made so far.</summary>
         private byte connectionAttempts;
         /// <summary>How many connection attempts to make before giving up.</summary>
@@ -83,16 +99,21 @@ namespace RiptideNetworking.Transports.RudpTransport
 
         /// <summary>Handles initial setup.</summary>
         /// <param name="timeoutTime">The time (in milliseconds) after which to disconnect if there's no heartbeat from the server.</param>
+        /// <param name="quietTime">The time (in milliseconds) after which to alert of a possible reconnection required, if there's no heartbeat from the server.</param>
         /// <param name="heartbeatInterval">The interval (in milliseconds) at which heartbeats should be sent to the server.</param>
         /// <param name="maxConnectionAttempts">How many connection attempts to make before giving up.</param>
         /// <param name="logName">The name to use when logging messages via <see cref="RiptideLogger"/>.</param>
-        public RudpClient(ushort timeoutTime = 5000, ushort heartbeatInterval = 1000, byte maxConnectionAttempts = 5, string logName = "CLIENT") : base(logName)
+        public RudpClient(string userId, ushort timeoutTime = 7500, ushort heartbeatInterval = 1000, byte maxConnectionAttempts = 5, string logName = "CLIENT") : base(logName)
         {
+            UserId = userId;
             TimeoutTime = timeoutTime;
             _heartbeatInterval = heartbeatInterval;
             this.maxConnectionAttempts = maxConnectionAttempts;
             pendingPingStopwatch = new Stopwatch();
         }
+
+
+
 
         /// <inheritdoc/>
         /// <remarks>Expects the host address to consist of an IP and port, separated by a colon. For example: <c>127.0.0.1:7777</c>.</remarks>
@@ -103,7 +124,7 @@ namespace RiptideNetworking.Transports.RudpTransport
 
             connectionAttempts = 0;
             remoteEndPoint = new IPEndPoint(ip.MapToIPv6(), port);
-            peer = new RudpPeer(this);
+            peer = new RudpPeer(this, Id);
 
             StartListening();
             connectionState = ConnectionState.connecting;
@@ -168,7 +189,7 @@ namespace RiptideNetworking.Transports.RudpTransport
             }
             else if (IsConnected)
             {
-                // If connected and not timed out, send heartbeats
+                //If connected and not timed out, send heartbeats
                 if (HasTimedOut)
                 {
                     OnDisconnected();
@@ -177,6 +198,8 @@ namespace RiptideNetworking.Transports.RudpTransport
 
                 SendHeartbeat();
             }
+            
+
         }
 
         /// <inheritdoc/>
@@ -232,6 +255,9 @@ namespace RiptideNetworking.Transports.RudpTransport
                     break;
                 case HeaderType.disconnect:
                     HandleDisconnect();
+                    break;
+                case HeaderType.clientReconnected:
+                    HandleReconnection(message);
                     break;
                 default:
                     RiptideLogger.Log(LogType.warning, LogName, $"Unknown message header type '{messageHeader}'! Discarding {message.WrittenLength} bytes.");
@@ -298,7 +324,7 @@ namespace RiptideNetworking.Transports.RudpTransport
         {
             Send(Message.Create(HeaderType.connect));
         }
-
+       
         /// <inheritdoc/>
         protected override void SendAck(ushort forSeqId, IPEndPoint toEndPoint)
         {
@@ -315,6 +341,9 @@ namespace RiptideNetworking.Transports.RudpTransport
             }
         }
 
+        #region ADDED MESSAGE CONFIRMATION
+        public static event Action<ushort> OnAckMessage;
+        #endregion
         /// <summary>Handles an ack message.</summary>
         /// <param name="message">The ack message to handle.</param>
         private void HandleAck(Message message)
@@ -322,6 +351,7 @@ namespace RiptideNetworking.Transports.RudpTransport
             ushort remoteLastReceivedSeqId = message.GetUShort();
             ushort remoteAcksBitField = message.GetUShort();
 
+            OnAckMessage?.Invoke(remoteLastReceivedSeqId);
             peer.AckMessage(remoteLastReceivedSeqId); // Immediately mark it as delivered so no resends are triggered while waiting for the sequence ID's bit to reach the end of the bit field
             peer.UpdateReceivedAcks(remoteLastReceivedSeqId, remoteAcksBitField);
         }
@@ -334,6 +364,7 @@ namespace RiptideNetworking.Transports.RudpTransport
             ushort remoteAcksBitField = message.GetUShort();
             ushort ackedSeqId = message.GetUShort();
 
+            OnAckMessage?.Invoke(ackedSeqId);
             peer.AckMessage(ackedSeqId); // Immediately mark it as delivered so no resends are triggered while waiting for the sequence ID's bit to reach the end of the bit field
             peer.UpdateReceivedAcks(remoteLastReceivedSeqId, remoteAcksBitField);
         }
@@ -378,11 +409,13 @@ namespace RiptideNetworking.Transports.RudpTransport
             OnConnected();
         }
 
+       
         /// <summary>Sends a welcome (received) message.</summary>
         private void SendWelcomeReceived()
         {
             Message message = Message.Create(HeaderType.welcome, 25);
             message.Add(Id);
+            message.Add(UserId);
             if (connectBytes != null)
             {
                 message.Add(connectBytes, false);
@@ -392,11 +425,14 @@ namespace RiptideNetworking.Transports.RudpTransport
             Send(message);
         }
 
+        
         /// <summary>Handles a client connected message.</summary>
         /// <param name="message">The client connected message to handle.</param>
         private void HandleClientConnected(Message message)
         {
-            OnClientConnected(new ClientConnectedEventArgs(message.GetUShort()));
+            ushort clientId = message.GetUShort();
+            string userId = message.GetString();
+            OnClientConnected(new ClientConnectedEventArgs(clientId, userId));
         }
 
         /// <summary>Handles a client disconnected message.</summary>
@@ -417,6 +453,8 @@ namespace RiptideNetworking.Transports.RudpTransport
         {
             OnDisconnected();
         }
+
+       
         #endregion
 
         #region Events
@@ -472,6 +510,56 @@ namespace RiptideNetworking.Transports.RudpTransport
 
             receiveActionQueue.Add(() => ClientDisconnected?.Invoke(this, e));
         }
+
+        private void HandleReconnection(Message message)
+        {
+            ushort id = message.GetUShort();
+            string user = message.GetString();
+            ushort oldId = message.GetUShort();
+            ClientReconnectedArgs e = new ClientReconnectedArgs(id, user, oldId);
+            OnClientReconnected(e);
+        }
+
+        private void OnClientReconnected(ClientReconnectedArgs e)
+        {
+            RiptideLogger.Log(LogType.info, LogName, $"User {e.UserId}/ (Old: {e.oldId}) reconnected with ClientId of {e.Id}.");
+            receiveActionQueue.Add(() => ClientReconnected?.Invoke(this, e));
+        }
+
         #endregion
+
+        //#region Online Status
+        //public double SinceLastHeartbeat
+        //{
+        //    get
+        //    {
+        //        return (DateTime.UtcNow - lastHeartbeat).TotalMilliseconds;
+        //    }
+        //}
+        //internal bool HasNewStatus(out OnlineStatus newStatus)
+        //{
+        //    OnlineStatus current = Status;
+        //    newStatus = GetStatus();
+        //    Status = newStatus;
+
+        //    return current != newStatus;
+
+        //}
+        //private OnlineStatus GetStatus()
+        //{
+        //    double heartBeat = SinceLastHeartbeat;
+        //    if (heartBeat >= TimeoutTime)
+        //    {
+        //        return OnlineStatus.offline;
+        //    }
+        //    if (heartBeat >= AwayTime)
+        //    {
+        //        return OnlineStatus.away;
+        //    }
+        //    return OnlineStatus.active;
+        //}
+
+
+        //#endregion
     }
 }
