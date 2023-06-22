@@ -22,6 +22,7 @@ namespace RiptideNetworking.Transports.RudpTransport
         /// <inheritdoc/>
         public event EventHandler<ClientDisconnectedEventArgs> ClientDisconnected;
 
+      
         /// <inheritdoc/>
         public ushort Port { get; private set; }
         /// <inheritdoc/>
@@ -47,7 +48,7 @@ namespace RiptideNetworking.Transports.RudpTransport
         /// <inheritdoc/>
         public bool AllowAutoMessageRelay { get; set; } = false;
         /// <summary>The time (in milliseconds) after which to disconnect a client without a heartbeat.</summary>
-        public ushort ClientTimeoutTime { get; set; } = 5000;
+        public int ClientTimeoutTime { get; set; } = 7500;
         /// <summary>The interval (in milliseconds) at which heartbeats are to be expected from clients.</summary>
         public ushort ClientHeartbeatInterval
         {
@@ -70,11 +71,23 @@ namespace RiptideNetworking.Transports.RudpTransport
         /// <summary>The timer responsible for sending regular heartbeats.</summary>
         private Timer heartbeatTimer;
 
+
+        #region NEW Client ID
+        private DoubleKeyDictionary<string, IPEndPoint, RudpConnection> players;
+
+        /// <summary>
+        /// Time in milliseconds after a client disconnects that it remains in the dropped players pool, to allow them time to reconnect.
+        /// </summary>
+        private double DroppedPlayerTimeout = 60000;
+        private DoubleKeyDictionary<string, IPEndPoint, RudpConnection> droppedPlayers;
+
+        #endregion
+
         /// <summary>Handles initial setup.</summary>
         /// <param name="clientTimeoutTime">The time (in milliseconds) after which to disconnect a client without a heartbeat.</param>
         /// <param name="clientHeartbeatInterval">The interval (in milliseconds) at which heartbeats are to be expected from clients.</param>
         /// <param name="logName">The name to use when logging messages via <see cref="RiptideLogger"/>.</param>
-        public RudpServer(ushort clientTimeoutTime = 5000, ushort clientHeartbeatInterval = 1000, string logName = "SERVER") : base(logName)
+        public RudpServer(int clientTimeoutTime = 7500, ushort clientHeartbeatInterval = 1000, string logName = "SERVER") : base(logName)
         {
             ClientTimeoutTime = clientTimeoutTime;
             _clientHeartbeatInterval = clientHeartbeatInterval;
@@ -87,6 +100,7 @@ namespace RiptideNetworking.Transports.RudpTransport
             MaxClientCount = maxClientCount;
             clients = new DoubleKeyDictionary<ushort, IPEndPoint, RudpConnection>(MaxClientCount);
             timedOutClients = new List<IPEndPoint>(MaxClientCount);
+            droppedPlayers = new DoubleKeyDictionary<string, IPEndPoint, RudpConnection>(MaxClientCount);
 
             InitializeClientIds();
 
@@ -101,14 +115,19 @@ namespace RiptideNetworking.Transports.RudpTransport
         {
             lock (clients)
             {
+
                 foreach (RudpConnection client in clients.Values)
+                {
                     if (client.HasTimedOut)
+                    {
                         timedOutClients.Add(client.RemoteEndPoint);
+                    }
+
+                }                       
             }
 
             foreach (IPEndPoint clientEndPoint in timedOutClients)
                 HandleDisconnect(clientEndPoint); // Disconnect the clients
-
             timedOutClients.Clear();
         }
 
@@ -182,16 +201,17 @@ namespace RiptideNetworking.Transports.RudpTransport
                     client.HandleAckExtra(message);
                     break;
                 case HeaderType.connect:
-                    // Handled in ShouldHandleMessageFrom method
+                // Handled in ShouldHandleMessageFrom method
                     break;
                 case HeaderType.heartbeat:
                     client.HandleHeartbeat(message);
                     break;
                 case HeaderType.welcome:
-                    client.HandleWelcomeReceived(message);
+                    client.HandleWelcomeUserReceived(message);
                     return; // Important so the message isn't released immediately
                 case HeaderType.clientConnected:
                 case HeaderType.clientDisconnected:
+                case HeaderType.clientReconnected:
                     break;
                 case HeaderType.disconnect:
                     HandleDisconnect(fromEndPoint);
@@ -235,6 +255,25 @@ namespace RiptideNetworking.Transports.RudpTransport
             if (shouldRelease)
                 message.Release();
         }
+
+        #region Added
+        public void Send(Message message, string clientId, bool shouldRelease = true)
+        {
+            if (TryGetClient(clientId, out RudpConnection toClient))
+                Send(message, toClient, false);
+
+            if (shouldRelease)
+                message.Release();
+        }
+        private bool TryGetClient(string clientId, out RudpConnection client)
+        {
+            lock (players)
+            {
+                return players.TryGetValue(clientId, out client);
+            }
+
+        }
+        #endregion
 
         /// <inheritdoc/>
         public void SendToAll(Message message, bool shouldRelease = true)
@@ -294,6 +333,23 @@ namespace RiptideNetworking.Transports.RudpTransport
                 RiptideLogger.Log(LogType.warning, LogName, $"Failed to kick {client.RemoteEndPoint} because they weren't connected!");
         }
 
+
+        #region OLD LocalDisconnect
+        //private void LocalDisconnect(RudpConnection client)
+        //{
+        //    client.LocalDisconnect();
+        //    lock (clients)
+        //    {
+        //        if (clients.Remove(client.Id, client.RemoteEndPoint))
+        //        {
+        //            OnClientDisconnected(new ClientDisconnectedEventArgs(client.Id));
+        //            availableClientIds.Add(client.Id);
+        //        }
+        //    }
+        //}
+        #endregion
+
+
         private void LocalDisconnect(RudpConnection client)
         {
             client.LocalDisconnect();
@@ -301,11 +357,18 @@ namespace RiptideNetworking.Transports.RudpTransport
             {
                 if (clients.Remove(client.Id, client.RemoteEndPoint))
                 {
+                    if (client.HasUserId && !droppedPlayers.ContainsKey(client.RemoteEndPoint))
+                    {
+                        client.DropConnection();
+                        droppedPlayers.Add(client.UserId, client.RemoteEndPoint, client);
+                    }
                     OnClientDisconnected(new ClientDisconnectedEventArgs(client.Id));
                     availableClientIds.Add(client.Id);
                 }
             }
         }
+
+
 
         /// <inheritdoc/>
         public void Shutdown()
@@ -354,7 +417,7 @@ namespace RiptideNetworking.Transports.RudpTransport
         {
             lock (clients)
                 return clients.TryGetValue(clientId, out client);
-        }
+        }             
 
         private bool TryGetClient(IPEndPoint fromEndPoint, out RudpConnection client)
         {
@@ -385,6 +448,10 @@ namespace RiptideNetworking.Transports.RudpTransport
                 LocalDisconnect(client);
         }
 
+       
+
+
+        #region Depreciated
         /// <summary>Sends a client connected message.</summary>
         /// <param name="endPoint">The endpoint of the newly connected client.</param>
         /// <param name="id">The ID of the newly connected client.</param>
@@ -403,6 +470,38 @@ namespace RiptideNetworking.Transports.RudpTransport
 
             message.Release();
         }
+        #endregion
+
+
+
+        #region ADDED
+        /// <summary>Sends a client connected message.</summary>
+        /// <param name="endPoint">The endpoint of the newly connected client.</param>
+        /// <param name="id">The ID of the newly connected client.</param>
+        private void SendUserConnected(IPEndPoint endPoint, ushort id, string userId)
+        {
+            if (ClientCount <= 1)
+                return; // We don't send this to the newly connected client anyways, so don't even bother creating a message if he is the only one connected
+
+            Message message = Message.Create(HeaderType.clientConnected, 25);
+            message.Add(id);
+            message.Add(userId);
+
+          
+
+            lock (clients)
+                foreach (RudpConnection client in clients.Values)
+                    if (!client.RemoteEndPoint.Equals(endPoint))
+                        Send(message, client, false);
+
+            message.Release();
+        }
+
+        
+        #endregion
+
+
+
 
         /// <summary>Sends a client disconnected message.</summary>
         /// <param name="id">The numeric ID of the client that disconnected.</param>
@@ -420,6 +519,7 @@ namespace RiptideNetworking.Transports.RudpTransport
         #endregion
 
         #region Events
+
         /// <summary>Invokes the <see cref="ClientConnected"/> event.</summary>
         /// <param name="clientEndPoint">The endpoint of the newly connected client.</param>
         /// <param name="e">The event args to invoke the event with.</param>
@@ -432,7 +532,29 @@ namespace RiptideNetworking.Transports.RudpTransport
                 ClientConnected?.Invoke(this, e);
                 e.ConnectMessage.Release();
             });
-            SendClientConnected(clientEndPoint, e.Client.Id);
+
+            bool isReconnect = false;
+            ushort oldId = 0;
+
+            lock (droppedPlayers)
+            {
+                if (droppedPlayers.TryGetValue(e.Client.UserId, out RudpConnection value))
+                {
+                    oldId = value.Id;
+                    isReconnect = true;
+                    droppedPlayers.Remove(e.Client.UserId, clientEndPoint);
+                }
+            }
+
+            if (isReconnect)
+            {
+                SendClientReconnected(clientEndPoint, e.Client.Id, e.Client.UserId, oldId);
+            }
+            else
+            {
+                SendClientConnected(clientEndPoint, e.Client.Id, e.Client.UserId);
+            }
+
         }
 
         /// <summary>Invokes the <see cref="MessageReceived"/> event.</summary>
@@ -459,6 +581,53 @@ namespace RiptideNetworking.Transports.RudpTransport
             receiveActionQueue.Add(() => ClientDisconnected?.Invoke(this, e));
             SendClientDisconnected(e.Id);
         }
+
+
+        #region Added
+        /// <summary>Sends a client connected message.</summary>
+        /// <param name="endPoint">The endpoint of the newly connected client.</param>
+        /// <param name="id">The ID of the newly connected client.</param>
+        private void SendClientConnected(IPEndPoint endPoint, ushort id, string userId)
+        {
+            if (ClientCount <= 1)
+                return; // We don't send this to the newly connected client anyways, so don't even bother creating a message if he is the only one connected
+
+            Message message = Message.Create(HeaderType.clientConnected, 25);
+            message.Add(id);
+            message.Add(userId);
+
+            lock (clients)
+            {
+                foreach (RudpConnection client in clients.Values)
+                    if (!client.RemoteEndPoint.Equals(endPoint))
+                        Send(message, client, false);
+            }
+
+            message.Release();
+        }
+
+        /// <summary>If a client reconnects after disconnecting within the Dropped Timeout Threshold, they are reconnecting, so send a Reconnecting message.</summary>
+        private void SendClientReconnected(IPEndPoint endPoint, ushort id, string userId, ushort oldId)
+        {
+            if (ClientCount <= 1)
+                return; // We don't send this to the newly connected client anyways, so don't even bother creating a message if he is the only one connected
+
+            Message message = Message.Create(HeaderType.clientReconnected, 25);
+            message.Add(id);
+            message.Add(userId);
+            message.Add(oldId);
+
+            lock (clients)
+            {
+                foreach (RudpConnection client in clients.Values)
+                    if (!client.RemoteEndPoint.Equals(endPoint))
+                        Send(message, client, false);
+            }
+
+            message.Release();
+        }
+        #endregion
+
         #endregion
     }
 }
