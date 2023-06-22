@@ -23,6 +23,9 @@ namespace RiptideNetworking.Transports
         event EventHandler<ClientConnectedEventArgs> ClientConnected;
         /// <summary>Invoked when a client disconnects.</summary>
         event EventHandler<ClientDisconnectedEventArgs> ClientDisconnected;
+        event EventHandler<ClientReconnectedArgs> ClientReconnected;
+        event EventHandler<ushort> AckRecieved;
+
 
         /// <summary>Attempts to connect to the given host address.</summary>
         /// <param name="hostAddress">The host address to connect to.</param>

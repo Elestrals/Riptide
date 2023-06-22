@@ -27,7 +27,13 @@ namespace RiptideNetworking
         public event EventHandler<ClientConnectedEventArgs> ClientConnected;
         /// <inheritdoc cref="IClient.ClientDisconnected"/>
         public event EventHandler<ClientDisconnectedEventArgs> ClientDisconnected;
+        public event EventHandler<ClientReconnectedArgs> ClientReconnected;
+        public event EventHandler<ushort> AckRecieved;
 
+
+
+        /// <inheritdoc cref="IConnectionInfo.User"/>
+        public string userId => client.UserId;
         /// <inheritdoc cref="IConnectionInfo.Id"/>
         public ushort Id => client.Id;
         /// <inheritdoc cref="IConnectionInfo.RTT"/>
@@ -49,16 +55,31 @@ namespace RiptideNetworking
         /// <summary>The underlying client that is used for sending and receiving data.</summary>
         private IClient client;
 
+        private List<MessageData> _messageList = null;
+        public List<MessageData> MessageList
+        {
+            get
+            {
+                _messageList ??= new List<MessageData>();
+                return _messageList;
+            }
+        }
+
+        
+        
+
+
         /// <summary>Handles initial setup.</summary>
         /// <param name="client">The underlying client that is used for sending and receiving data.</param>
         public Client(IClient client) => this.client = client;
 
         /// <summary>Handles initial setup using the built-in RUDP transport.</summary>
+        /// <param name="userId">The UserId(playerId) of the user, to be sent to the server so the player can register with that Id.</param>
         /// <param name="timeoutTime">The time (in milliseconds) after which to disconnect if there's no heartbeat from the server.</param>
         /// <param name="heartbeatInterval">The interval (in milliseconds) at which heartbeats should be sent to the server.</param>
         /// <param name="maxConnectionAttempts">How many connection attempts to make before giving up.</param>
         /// <param name="logName">The name to use when logging messages via <see cref="RiptideLogger"/>.</param>
-        public Client(ushort timeoutTime = 5000, ushort heartbeatInterval = 1000, byte maxConnectionAttempts = 5, string logName = "CLIENT") => client = new Transports.RudpTransport.RudpClient(timeoutTime, heartbeatInterval, maxConnectionAttempts, logName);
+        public Client(string userId, ushort timeoutTime = 7500, ushort heartbeatInterval = 1000, byte maxConnectionAttempts = 5, string logName = "CLIENT") => client = new Transports.RudpTransport.RudpClient(userId, timeoutTime, heartbeatInterval, maxConnectionAttempts, logName);
 
         /// <summary>Disconnects the client if it's connected and swaps out the transport it's using.</summary>
         /// <param name="client">The underlying client that is used for managing the connection to the server.</param>
@@ -89,6 +110,8 @@ namespace RiptideNetworking
             client.Disconnected += OnDisconnected;
             client.ClientConnected += OnClientConnected;
             client.ClientDisconnected += OnClientDisconnected;
+            client.ClientReconnected += OnClientReconnected;
+            client.AckRecieved += OnAckRecieved;
             client.Connect(hostAddress, message);
         }
 
@@ -156,6 +179,8 @@ namespace RiptideNetworking
             client.Disconnected -= OnDisconnected;
             client.ClientConnected -= OnClientConnected;
             client.ClientDisconnected -= OnClientDisconnected;
+            client.ClientReconnected -= OnClientReconnected;
+            client.AckRecieved -= OnAckRecieved;
         }
 
         /// <summary>Invokes the <see cref="Connected"/> event.</summary>
@@ -174,9 +199,16 @@ namespace RiptideNetworking
             MessageReceived?.Invoke(this, e);
 
             if (messageHandlers.TryGetValue(e.MessageId, out MessageHandler messageHandler))
+            {
                 messageHandler(e.Message);
+                //MessageList.Add(new MessageData(e.MessageId, e.Message, false));
+            }
             else
+            {
                 RiptideLogger.Log(LogType.warning, $"No client-side handler method found for message ID {e.MessageId}!");
+            }
+               
+                
         }
 
         /// <summary>Invokes the <see cref="Disconnected"/> event.</summary>
@@ -191,5 +223,9 @@ namespace RiptideNetworking
 
         /// <summary>Invokes the <see cref="ClientDisconnected"/> event.</summary>
         private void OnClientDisconnected(object s, ClientDisconnectedEventArgs e) => ClientDisconnected?.Invoke(this, e);
+        private void OnClientReconnected(object s, ClientReconnectedArgs e) => ClientReconnected?.Invoke(this, e);
+
+        private void OnAckRecieved(object s, ushort u) => AckRecieved?.Invoke(this, u);   
+
     }
 }

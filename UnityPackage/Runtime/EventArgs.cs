@@ -53,10 +53,15 @@ namespace RiptideNetworking
     {
         /// <summary>The numeric ID of the newly connected client.</summary>
         public ushort Id { get; private set; }
+        public string UserId { get; private set; }
 
         /// <summary>Initializes event data.</summary>
         /// <param name="id">The numeric ID of the newly connected client.</param>
-        public ClientConnectedEventArgs(ushort id) => Id = id;
+        public ClientConnectedEventArgs(ushort id, string user)
+        {
+            this.Id = id;
+            UserId = user;  
+        }
     }
 
     /// <summary>Contains event data for when the client receives a message from the server.</summary>
@@ -87,4 +92,49 @@ namespace RiptideNetworking
         /// <param name="id">The numeric ID of the client that disconnected.</param>
         public ClientDisconnectedEventArgs(ushort id) => Id = id;
     }
+
+    #region Added
+    /// <summary>Contains event data for when a client disconnects from the server.</summary>
+    public class ClientConnectionQuietArgs : EventArgs
+    {
+        /// <summary>The numeric ID of the client that disconnected.</summary>
+        public ushort Id { get; private set; }
+
+        /// <summary>Initializes event data.</summary>
+        /// <param name="id">The numeric ID of the client that disconnected.</param>
+        public ClientConnectionQuietArgs(ushort id) => Id = id;
+    }
+
+
+    public class ServerClientReconnectedArgs : EventArgs
+    {
+        /// <summary>The newly connected client.</summary>
+        public IConnectionInfo Client { get; private set; }
+        /// <summary>A message containing any custom data the client included when it connected.</summary>
+        public Message ReconnectMessage { get; private set; }
+
+        /// <summary>Initializes event data.</summary>
+        /// <param name="client">The newly connected client.</param>
+        /// <param name="connectMessage">A message containing any custom data the client included when it connected.</param>
+        public ServerClientReconnectedArgs(IConnectionInfo client, Message connectMessage)
+        {
+            Client = client;
+            ReconnectMessage = connectMessage;
+        }
+    }
+    public class ClientReconnectedArgs : EventArgs
+    {
+        /// <summary>The newly connected client.</summary>
+        public ushort Id { get; private set; }
+        /// <summary>A message containing any custom data the client included when it connected.</summary>
+        public string UserId { get; private set; }
+        public ushort oldId { get; private set; }
+        public ClientReconnectedArgs(ushort clientId, string playerId, ushort oldId)
+        {
+            Id = clientId;
+            UserId = playerId;
+            this.oldId = oldId;
+        }
+    }
+    #endregion
 }
