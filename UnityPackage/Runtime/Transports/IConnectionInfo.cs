@@ -1,5 +1,4 @@
-﻿
-// This file is provided under The MIT License as part of RiptideNetworking.
+﻿// This file is provided under The MIT License as part of RiptideNetworking.
 // Copyright (c) 2021 Tom Weiland
 // For additional information please see the included LICENSE.md file or view it on GitHub: https://github.com/tom-weiland/RiptideNetworking/blob/main/LICENSE.md
 
@@ -19,6 +18,7 @@ namespace RiptideNetworking.Transports
     /// <summary>Defines methods, properties, and events which every transport's connections must implement.</summary>
     public interface IConnectionInfo
     {
+        string UserId { get; }
         /// <summary>The numeric ID of the client.</summary>
         ushort Id { get; }
         /// <summary>The round trip time of the connection. -1 if not calculated yet.</summary>
