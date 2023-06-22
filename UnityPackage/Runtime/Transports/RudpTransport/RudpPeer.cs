@@ -41,11 +41,21 @@ namespace RiptideNetworking.Transports.RudpTransport
         /// <summary>A <see cref="ushort"/> with the left-most bit set to 1.</summary>
         private const ushort LeftBit = 1 << 15;
 
+        internal ushort clientId { get; set; }
+
+
+        public event Action<ushort, bool> OnMessageDeliveryStatus;
+        internal void RaiseDeliveryUpdate(ushort seqId, bool wasDelivered)
+        {
+            OnMessageDeliveryStatus?.Invoke(seqId, wasDelivered);
+        }
+
         /// <summary>Handles initial setup.</summary>
         /// <param name="rudpListener">The <see cref="RudpListener"/> whose socket to use when sending data.</param>
-        internal RudpPeer(RudpListener rudpListener)
+        internal RudpPeer(RudpListener rudpListener, ushort connectionId)
         {
             Listener = rudpListener;
+            clientId = connectionId;
             SendLockables = new SendLockables();
             ReceiveLockables = new ReceiveLockables();
         }
@@ -106,18 +116,30 @@ namespace RiptideNetworking.Transports.RudpTransport
             {
                 // Message was successfully delivered
                 if (PendingMessages.TryGetValue(sequenceId, out PendingMessage pendingMessage))
+                {
+                    RaiseDeliveryUpdate(sequenceId, true);
                     pendingMessage.Clear();
+                }
+                    
             }
         }
+
+
+       
 
         /// <summary>Immediately marks the <see cref="PendingMessage"/> of a given sequence ID as delivered.</summary>
         /// <param name="seqId">The sequence ID that was acknowledged.</param>
         internal void AckMessage(ushort seqId)
         {
+           
             lock (PendingMessages)
             {
                 if (PendingMessages.TryGetValue(seqId, out PendingMessage pendingMessage))
+                {
+                    RaiseDeliveryUpdate(seqId, true);
                     pendingMessage.Clear();
+                }
+                   
             }
         }
 

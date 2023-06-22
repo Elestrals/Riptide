@@ -29,10 +29,14 @@ namespace RiptideNetworking.Transports
         reliableAutoRelay = reliable + 1,
         /// <summary>For reliable internal welcome messages.</summary>
         welcome,
+        /// <summary>For reliable internal welcome messages that have a UserId from the client.</summary>
+        welcomeUser,
         /// <summary>For reliable internal client connected messages.</summary>
         clientConnected,
         /// <summary>For reliable internal client disconnected messages.</summary>
         clientDisconnected,
+        /// <summary>For reliable internal client Reconnected messages.</summary>
+        clientReconnected,
     }
 
     /// <summary>Contains extension methods for the <see cref="Message"/> class which are only intended for use by transport-related code.</summary>
