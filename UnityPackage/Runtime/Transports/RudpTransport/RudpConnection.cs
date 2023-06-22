@@ -6,6 +6,7 @@
 using RiptideNetworking.Utils;
 using System;
 using System.Net;
+using System.Runtime.InteropServices;
 
 namespace RiptideNetworking.Transports.RudpTransport
 {
@@ -13,6 +14,7 @@ namespace RiptideNetworking.Transports.RudpTransport
     public class RudpConnection : IConnectionInfo
     {
         /// <inheritdoc/>
+        public string UserId { get; private set; }
         public ushort Id { get; private set; }
         /// <inheritdoc/>
         public short RTT => Peer.RTT;
@@ -25,6 +27,7 @@ namespace RiptideNetworking.Transports.RudpTransport
         /// <inheritdoc/>
         public bool IsConnected => connectionState == ConnectionState.connected;
 
+       
         /// <summary>The connection's remote endpoint.</summary>
         public readonly IPEndPoint RemoteEndPoint;
 
@@ -35,12 +38,23 @@ namespace RiptideNetworking.Transports.RudpTransport
         /// <summary>Whether or not the client has timed out.</summary>
         internal bool HasTimedOut => (DateTime.UtcNow - lastHeartbeat).TotalMilliseconds > server.ClientTimeoutTime;
 
+        
         /// <summary>The time at which the last heartbeat was received from the client.</summary>
         private DateTime lastHeartbeat;
         /// <summary>The <see cref="RudpServer"/> that the client is associated with.</summary>
         private readonly RudpServer server;
         /// <summary>The client's current connection state.</summary>
         private ConnectionState connectionState = ConnectionState.notConnected;
+
+        #region Added
+        internal bool HasUserId { get { return !string.IsNullOrEmpty(UserId); } }
+        internal DateTime droppedTime { get; private set; }
+        internal void DropConnection()
+        {
+            droppedTime = DateTime.UtcNow;
+        }
+       
+        #endregion
 
         /// <summary>Handles initial setup.</summary>
         /// <param name="server">The <see cref="RudpServer"/> that the client is associated with.</param>
@@ -51,7 +65,7 @@ namespace RiptideNetworking.Transports.RudpTransport
             this.server = server;
             RemoteEndPoint = endPoint;
             Id = id;
-            Peer = new RudpPeer(server);
+            Peer = new RudpPeer(server, id);
             lastHeartbeat = DateTime.UtcNow;
 
             connectionState = ConnectionState.connecting;
@@ -62,6 +76,7 @@ namespace RiptideNetworking.Transports.RudpTransport
         internal void LocalDisconnect()
         {
             connectionState = ConnectionState.notConnected;
+         
 
             lock (Peer.PendingMessages)
             {
@@ -141,20 +156,44 @@ namespace RiptideNetworking.Transports.RudpTransport
             server.Send(message, this);
         }
 
+        //#region DEPRECIATED
+        ///// <summary>Handles a welcome message.</summary>
+        ///// <param name="message">The welcome message to handle.</param>
+        //internal void HandleWelcomeReceived(Message message)
+        //{
+        //    if (IsConnected)
+        //        return;
+
+        //    ushort id = message.GetUShort();
+        //    if (Id != id)
+        //        RiptideLogger.Log(LogType.error, server.LogName, $"Client has assumed ID {id} instead of {Id}!");
+
+        //    connectionState = ConnectionState.connected;
+        //    server.OnClientConnected(RemoteEndPoint, new ServerClientConnectedEventArgs(this, message));
+        //}
+        //#endregion
+
         /// <summary>Handles a welcome message.</summary>
         /// <param name="message">The welcome message to handle.</param>
-        internal void HandleWelcomeReceived(Message message)
+        internal void HandleWelcomeUserReceived(Message message)
         {
             if (IsConnected)
                 return;
 
             ushort id = message.GetUShort();
+            string user = message.GetString();
+
+            UserId = user;
+            RiptideLogger.Log(LogType.info, $"User {UserId} has connected with Client ID {id}");
             if (Id != id)
                 RiptideLogger.Log(LogType.error, server.LogName, $"Client has assumed ID {id} instead of {Id}!");
 
             connectionState = ConnectionState.connected;
             server.OnClientConnected(RemoteEndPoint, new ServerClientConnectedEventArgs(this, message));
         }
+
         #endregion
+
+
     }
 }
